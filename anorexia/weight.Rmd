@@ -1,0 +1,55 @@
+---
+title: "Терапия при анорексии"
+output: html_document
+---
+В исследовании оценивается эффективность поведенческой терапии для лечения анорексии. Для 50 пациентов известен вес до начала терапии и по её окончании. Была ли терапия эффективной?
+
+```{r}
+w <-  read.table("weight.txt", header=T, sep="\t")
+```
+
+```{r, fig.height=5.5, fig.width=10, echo=FALSE}
+par(mfrow=c(1,2))
+plot(w, col="red", pch=16, xlim=c(min(w), max(w)), ylim=c(min(w), max(w)), xlab="Before", ylab="After")
+grid()
+
+qqnorm(w$After - w$Before, main="After-Before")
+qqline(w$After - w$Before, col="red")
+```
+
+Критерий знаков:
+```{r, warning=FALSE, message=FALSE}
+library(BSDA)
+SIGN.test(w$After, w$Before)
+```
+
+Критерий знаковых рангов Уилкоксона:
+```{r}
+wilcox.test(w$After, w$Before, paired=T, conf.int=T)
+```
+
+Перестановочный критерий:
+```{r, warning=FALSE, message=FALSE}
+library(exactRankTests)
+perm.test(w$After, w$Before, paired = T, exact = T) 
+```
+
+Доверительный интервал для среднего прироста веса с помощью бутстрепа:
+```{r, message=FALSE}
+library(boot)
+samplemean <- function(x, d){
+  return(c(mean(x[d]), sd(x[d])))
+}
+boot.ci(boot(w$After - w$Before, samplemean, R=5000))
+```
+
+Доверительный интервал для медианы прироста веса:
+```{r, message=FALSE}
+samplemedian <- function(x, d){
+  return(c(median(x[d]), sd(x[d])))
+}
+boot.ci(boot(w$After - w$Before, samplemedian, R=5000))
+```
+
+**************
+Everitt N., McMahon M. (2004). **Nutrition and the surgical patient.** In **Consensus in Clinical Nutrition**, Cambridge: Cambridge University Press.

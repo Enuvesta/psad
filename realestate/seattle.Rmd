@@ -1,0 +1,79 @@
+---
+title: "Недвижимость в Сиэттле"
+output: html_document
+---
+Имеются данные о продажной стоимости недвижимости в Сиэтле для 50 сделок в 2001 году и 50 в 2002.
+Изменились ли цены?
+
+```{r}
+data <- read.table("seattle.txt", header=T)
+boxplot(data$Price~data$Year, col=c("red", "blue"), notch=T, horizontal=T, xlab="Selling price", ylab="Year")
+x1   <- data$Price[data$Year == 2001]
+x2   <- data$Price[data$Year == 2002]
+```
+
+```{r,fig.height=5.5, fig.width=10}
+plot(density(x1), col="red",xlab="Selling price", main="",
+     xlim=c(min(density(x1)$x, density(x2)$x), max(density(x1)$x, density(x2)$x)), 
+     ylim=c(min(density(x1)$y, density(x2)$y), max(density(x1)$y, density(x2)$y)))
+lines(density(x2), col="blue")
+legend("topright", c("2001", "2002"), lty=c(1,1), col=c("red", "blue"))
+
+par(mfrow=c(1,2))
+qqnorm(x1, main="2001")
+qqline(x1, col="red")
+qqnorm(x2, main="2002")
+qqline(x2, col="red")
+```
+
+Критерий Стьюдента:
+```{r}
+t.test(x1,x2)
+```
+
+Критерий Манна-Уитни-Уилкоксона:
+```{r}
+wilcox.test(x1,x2,conf.int=T)
+```
+
+Перестановочный критерий:
+```{r, warning=FALSE, message=FALSE}
+library(perm)                    
+permTS(data$Price~data$Year, alternative="two.sided", method='exact.mc', control=permControl(nmc=10000))
+
+library(exactRankTests)
+perm.test(x1, x2, paired = FALSE, exact = TRUE) 
+```
+
+Доверительные интервалы для средних значений в выборках с помощью бутстрепа:
+```{r}
+library(boot)
+samplemean <- function(x, d){
+  return(mean(x[d]))
+}
+boot.ci(boot(x1, samplemean, R=1000))
+boot.ci(boot(x2, samplemean, R=1000))
+```
+
+Доверительный интервал для разности двух средних с помощью бутстрепа:
+```{r}
+diff.means <- function(d, f){
+  n <- nrow(d)
+  gp1 <- 1:table(as.numeric(d$Year))[1]
+  m1  <- sum(d[gp1,1] * f[gp1])/sum(f[gp1])
+  m2  <- sum(d[-gp1,1] * f[-gp1])/sum(f[-gp1])
+  ss1 <- sum(d[gp1,1]^2 * f[gp1]) - (m1 *  m1 * sum(f[gp1]))
+  ss2 <- sum(d[-gp1,1]^2 * f[-gp1]) - (m2 *  m2 * sum(f[-gp1]))
+  c(m1 - m2, (ss1 + ss2)/(sum(f) - 2))
+}
+data.boot <- boot(data, diff.means, R = 1000, stype = "f", strata = data$Year)
+boot.ci(data.boot)
+```
+
+Критерий Смирнова:
+```{r}
+ks.test(x1, x2)
+```
+
+**************
+Hesterberg T., Monaghan S., Moore D.S., Clipson A., Epstein R. (2005). **Bootstrap methods and permutation tests.** In **Introduction to the Practice of Statistics**, New York: W. H. Freeman and Company. http://statweb.stanford.edu/~tibs/stat315a/Supplements/bootstrap.pdf
