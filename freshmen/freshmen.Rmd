@@ -1,0 +1,98 @@
+---
+title: "Успеваемость первокурсников"
+output: html_document
+---
+
+Для 600 первокурсников известны показатели успеваемости по четырём предметам и результаты трёх психологических тестов. Как связаны эти два набора переменных?
+
+```{r}
+library(data.table)
+DT <- fread("./mmreg.csv")
+class(DT)  # inherits from data.table and data.frame
+psych <- DT[, 1:3, with=F]
+plot(psych)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+plot(DT)
+```
+
+
+
+Визуализируйте попарные корреляции Пирсона с помощью функции `corrplot` из пакета `corrplot`, предаварительно посчитав их с помощью функции `rcorr` из пакета `Hmisc`. Для визуализации очень полезен параметр `method="pie"` функции `corrplot`. 
+```{r, warning=FALSE, message=FALSE}
+library(Hmisc)
+library(corrplot) 
+p_corr_obj <- rcorr(as.matrix(DT), type="pearson")
+corrplot(p_corr_obj$r, method="pie")
+```
+
+
+Визуализируйте попарные корреляции Спирмена с помощью функции `corrplot` из пакета `corrplot`, предаварительно посчитав их с помощью функции `rcorr` из пакета `Hmisc`. 
+```{r}
+s_corr_obj <- rcorr(as.matrix(DT), type="spearman")
+corrplot(s_corr_obj$r, method="pie")
+```
+
+
+Визуализируйте попарные корреляции Кендалла с помощью функции `corrplot` из пакета `corrplot`, предаварительно посчитав их с помощью функции `cor` из стандартного пакета `stats`. 
+
+Попарные корреляции Кендалла 
+```{r}
+t_corr <- cor(DT, method="kendall")
+corrplot(t_corr, method="pie")
+```
+
+
+Если вам не нужна полноценная матрица всевозможных корреляций, а нужна только попарная корреляция некоторых групп, гораздо удобнее воспользоваться станадртной функцией `cor` или `cor.test`. Последняя, кроме прочего,  умеет, и проверять стат значимость всех трех видов корреляций (в том числе и  Кендалла - то, что не умеет `rcorr` из пакета `Hmisc`). Примените функцию `cor.test` для любой из пар признаков, для которых `rcorr` выдает нулевое p-value. Совпадают ли значения p-value? 
+
+```{r}
+cor.test(DT$locus_of_control, DT$read)
+```
+
+
+
+## Перестановочные тесты 
+
+1. Принцип перестановок можно также использовать для проверки статистической значимости значения корреляции. Реализуйте перестановочный тест для корреляции Спирмена между `math` и `motivation`.  
+
+2. Проверьте свой результат с помощью функции `spearmam_test` из пакета `coin`. 
+
+```{r}
+first = "math"
+second = "motivation"
+GetCorOnPermutation <- function(first, second) {
+   DT[, cor(get(first), sample(get(second)), method="spearm")]
+}
+out <- replicate(10000, GetCorOnPermutation(first, second))
+hist(out, breaks=100, xlim = c(-0.21, 0.21))
+abline(v=DT[,  cor(get(first), get(second), method="spearm")], col=3)
+
+
+library(coin)
+spearman_test(math ~ motivation, data=DT)
+```
+
+
+
+## Частная корреляция
+
+С помощью функции `pcor`  из пакета `ppcor`  получите значения частных корреляций Пирсона попарно между всеми переменными (при условии всех остальных) и сравните получившуюся матрицу с обычными попарными корреляциями, которые вы получили ранее.  
+```{r}
+library(ppcor)
+corrplot(pcor(DT)$estimate, method="pie")
+corrplot(p_corr_obj$r, method="pie")
+```
+
+Кроме частной корреляции есть еще так называемая получастная (semi partial correlation).
+На практике такая корреляция используется редко, но концептуально это та же самая корреляция, только теперь вместо одного  (и только одного) из признаков рассматривются отстаки от регрессии этого признака на какой-то другой признак (по которому мы берем условие). Подобные извращения также доступны в пакете `ppcor` с помощью функции `spcor`. 
+
+
+
+
+
+
+******************
+R Data Analysis Examples: Canonical Correlation Analysis. UCLA: Statistical Consulting Group. 
+http://www.ats.ucla.edu/stat/r/dae/canonical.htm

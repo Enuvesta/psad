@@ -1,0 +1,71 @@
+---
+title: "Образование и вера"
+output: html_document
+---
+General Social Survey — ежегодный опрос населения США, записывается около 5000 факторов. Из опроса 2008 года выбраны данные о вере и образовании 2000 опрошенных. Есть ли связь между степенью веры и уровнем образования?
+
+|Highest degree | don't believe |	no way to find out	| some higher power	| believe sometimes	| believe but doubts |	know God exists|
+|-------------- |  -------------| --------------------| ------------------| ------------------|--------------------|-----------------|
+|Less than high school	| 9	| 8	| 27	| 8	| 47	| 236|
+|High school or junior college	| 23	| 39	| 88	| 49	| 179	| 706|
+|Bachelor or graduate	| 28	| 48	| 89	| 19	| 104	| 293|
+
+```{r}
+data <- matrix(c(9,  8,27, 8, 47,236,
+                 23,39,88,49,179,706,
+                 28,48,89,19,104,293),
+               nrow=3, byrow=TRUE, 
+               dimnames = list(c("Less than high school", "High school/junior college", "Bachelor/graduate"), 
+                               c("don't", "no way", "some power", "sometimes", "doubts", "know")))
+```
+
+Воспользуейтесь критерием хи-квадрат `chisq.test` для проверки гипотезы независимости выборок, формирующих таблицу сопряженности `data`. 
+```{r}
+(chisq.obj <- chisq.test(data, correct = F))
+```
+
+Попробуйте в этой задаче точный критерий Фишера c помощью процедуры `fisher.test`. 
+Как вы думаете, почему вы получаете то, что вы получаете?  Попробуйте использовать методы Монте-Карло для того, чтобы получить значение p-value (параметр `simulate.p.value=T, B = 1e5`)
+```{r, error=TRUE}
+fisher.test(data, simulate.p.value = T, B=1e6)
+```
+
+Меры ассоциации  в таблице сопряженности можно вычислить с помощью функции `assocstats` в пакете `vcd` и с помощью функции `GKgamma` в пакете `vcdExtra`.   
+```{r, message=FALSE, warning=FALSE}
+library(vcd)
+assocstats(data)
+library(vcdExtra)
+GKgamma(data)
+```
+
+
+
+
+Вторичный анализ таблицы сопряженности, при условии, что Хи-квадрат признает изменения статистически значимыми сопряжен с некоторыми сложностями. До сих пор нет адекватной процедуры выявления конкретных факторов, присутствие которых приводит к стат. значимым отличиям.  Все, чем располагают исследователи сейчас - это сравнение остатков Пирсона, которые могут быть вычислены следующим образом 
+
+```{r}
+
+rowsum <- rowSums(data)
+colsum <- colSums(data)
+mu <- as.matrix(rowsum) %*% colsum / sum(data)
+colnames(mu) <- colnames(data)
+mu
+
+res <- (data - mu) / sqrt(mu * ((1 - rowsum / sum(data)) %*% t(1-colsum / sum(data))))
+res
+```
+Более простой способ получить эти остатки 
+```{r}
+chisq.obj$stdres
+```
+
+Утверждается, что эти остатки приближенно подчинаются стандартному нормальному распределению. Поэтому величины, большие 3 по модулю считаются сигнализирующими о неслучайности. 
+
+
+Другие методы анализа зависимости двух выборок смотрите в следующих сериях...
+
+
+
+
+****************
+2008 General Social Survey, National Opinion Research center (Agresti A. **Categorical Data Analysis**. — Hoboken: John Wiley & Sons, 2013, табл. 3.2)
