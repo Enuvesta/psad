@@ -1,0 +1,488 @@
+---
+title: "Привлекательность и уровень заработной платы"
+output: html_document
+---
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+library(lattice)
+library(MASS)
+library(lmtest)
+library(sandwich)
+library(mvtnorm)
+library(car)
+
+mycol <- rgb(30,30,30,100,maxColorValue=255)
+
+mycoeftest <- function(m, EstType){
+  beta  <- coef(m)[-1]
+  Vbeta <- vcovHC(m, type = EstType)[-1,-1]
+  D <- diag(1 / sqrt(diag(Vbeta)))
+  t <- D %*% beta
+  Cor <- D %*% Vbeta %*% t(D)
+  m.df <- length(m$residuals) - length(beta)
+  p_adj <- sapply(abs(t), function(x) 1-pmvt(-rep(x, length(beta)), rep(x, length(beta)), corr = Cor, df = m.df))
+  c(NaN, p_adj)
+}
+
+addtrend <- function(x, y){
+  y <- y[order(x)]
+  x <- sort(x)  
+  lines(x, predict(loess(y ~ x)), col = "red")
+}
+```
+
+## Постановка задачи
+По 1260 опрошенным имеются следующие данные:
+
+* заработная плата за час работы, $;
+* опыт работы, лет;
+* образование, лет;
+* внешняя привлекательность, в баллах от 1 до 5;
+* бинарные признаки: пол, семейное положение, состояние здоровья (хорошее/плохое), членство в профсоюзе, цвет кожи (белый/чёрный), занятость в сфере обслуживания (да/нет).
+
+Требуется оценить влияние внешней привлекательности на уровень заработка с учётом всех остальных факторов.
+
+Попарные диаграммы рассеяния всех количественных признаков:
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+data <- read.csv("beauty.csv", sep=";")
+
+panel.hist <- function(x, ...){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "red", ...)
+}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...){
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+
+panel.dots <- function(x, y, ...){
+  points(x, y, pch=19, col=mycol)
+}
+
+pairs(data[,c("wage", "exper", "educ", "looks")], diag.panel=panel.hist, 
+      upper.panel = panel.cor, lower.panel = panel.dots)
+```
+
+## Решение
+### Предобработка
+Посмотрим на распределение оценок привлекательности:
+```{r, echo=FALSE}
+hist(data$looks, col="red", breaks = seq(0.5, 5.5, by=1), main="", xlab="looks")
+```
+
+В группах looks=1 и looks=5 слишком мало наблюдений. Превратим признак looks в категориальный и закодируем с помощью фиктивных переменных:
+
+looks  | aboveavg | belowavg
+-------| ---------| ---------
+<3     | 1        |  0
+ 3     | 0        |  0
+>3     | 0        |  1
+
+```{r, echo=FALSE}
+data$aboveavg <- rep(1, dim(data)[1]) * (data$looks>3)
+data$belowavg <- rep(1, dim(data)[1]) * (data$looks<3)
+data$looks <- NULL
+```
+
+Распределение значений отклика:
+
+```{r, echo=FALSE}
+par(mfrow=c(1,2))
+hist(data$wage, col="red", main="", xlab="wage", breaks=50)
+hist(log(data$wage), col="red", main="", xlab="log wage", breaks=50)
+```
+
+1. Один человек в выборке получает 77.72$ в час, остальные — меньше 45$; удалим этого человека.
+```{r, echo=FALSE}
+excluded <- subset(data, wage>45)
+data     <- subset(data, wage<45)
+```
+2. $\frac{\max y}{\min y}=$ `r max(data$wage)/min(data$wage)` $>10$, поэтому найдём преобразование отклика методом Бокса-Кокса:
+
+```{r, echo=FALSE, warning=FALSE}
+par(mfrow=c(1,1))
+boxcox(lm(wage~., data=data))
+```
+
+Возьмём $\lambda=0$, то есть, будем строить регрессию логарифма отклика. 
+
+```{r, echo=FALSE}
+data$logwage <- log(data$wage)
+data$wage <- NULL
+
+excluded$logwage <- log(excluded$wage)
+excluded$wage <- NULL
+```
+
+### Модель 1
+Построим линейную модель по всем признакам.
+```{r, echo=FALSE}
+m1 <- lm(logwage ~., data=data)
+```
+Её остатки:
+
+Критерий     | p  
+----------   | ---------
+Шапиро-Уилка | `r shapiro.test(residuals(m1))$p.value`
+Уилкоксона   | `r wilcox.test(residuals(m1))$p.value`
+Бройша-Пагана| `r bptest(m1)$p.value`
+
+
+ненормальны, поэтому для проверки несмещённости используем критерий знаковых рангов Уилкоксона, и гетероскедастичны, поэтому оценку значимости признаков будем делать с дисперсиями Уайта; также будем делать поправку на множественность.
+
+```{r, echo=FALSE}
+s1 <-summary(m1)
+s1$coefficients <- cbind(s1$coefficients, mycoeftest(m1, "HC0"))
+dimnames(s1$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s1)
+```
+
+Визуальный анализ остатков:
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+par(mfrow=c(3,2))
+
+qqnorm(residuals(m1))
+qqline(residuals(m1), col="red")
+grid()
+
+plot(1:dim(data)[1], rstandard(m1), xlab="i", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(1:dim(data)[1], rstandard(m1))
+grid()
+
+plot(fitted(m1), rstandard(m1), xlab="Fitted values", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(fitted(m1), rstandard(m1))
+grid()
+
+plot(data$educ, rstandard(m1), xlab="Education", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$educ, rstandard(m1))
+grid()
+
+plot(data$exper, rstandard(m1), xlab="Experience", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper, rstandard(m1))
+grid()
+```
+
+В остатках наблюдается квадратичная зависимость от опыта работы.
+
+### Модель 2
+Добавим в модель 1 квадрат опыта работы. 
+```{r, echo=FALSE}
+m2 <- lm(logwage ~ . + I(exper^2) , data=data)
+```
+Её остатки:
+
+Критерий     | p  
+----------   | ---------
+Шапиро-Уилка | `r shapiro.test(residuals(m2))$p.value`
+Уилкоксона   | `r wilcox.test(residuals(m2))$p.value`
+Бройша-Пагана| `r bptest(m2)$p.value`
+
+ненормальны и гетероскедастичны. Результаты проверки гипотез о значимости всех признаков с поправкой на множественность и дисперсиями Уайта:
+```{r, echo=FALSE}
+s2 <-summary(m2)
+s2$coefficients <- cbind(s2$coefficients, mycoeftest(m2, "HC0"))
+dimnames(s2$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s2)
+```
+Незначимые признаки: здоровье, цвет кожи, семейное положение, привлекательность выше среднего. Прежде, чем удалять лишние признаки, проверим, не входят ли они в значимые попарные взаимодействия:
+```{r, echo=FALSE}
+add1(m2, ~ .^2, test="F")
+```
+
+Визуальный анализ остатков не показывает никаких существенных особенностей:
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+par(mfrow=c(3,2))
+
+qqnorm(residuals(m2))
+qqline(residuals(m2), col="red")
+grid()
+
+plot(1:dim(data)[1], rstandard(m2), xlab="i", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(1:dim(data)[1], rstandard(m2))
+grid()
+
+plot(fitted(m2), rstandard(m2), xlab="Fitted values", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(fitted(m2), rstandard(m2))
+grid()
+
+plot(data$educ, rstandard(m2), xlab="Education", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$educ, rstandard(m2))
+grid()
+
+plot(data$exper, rstandard(m2), xlab="Experience", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper, rstandard(m2))
+grid()
+
+plot(data$exper^2, rstandard(m2), xlab="Experience^2", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper^2, rstandard(m2))
+grid()
+```
+
+
+### Модель 3
+Удалим из модели 2 незначимые признаки и добавим межфакторное взаимодействие пола и опыта работы.
+```{r, echo=FALSE}
+m3 <- lm(logwage ~ exper+ exper*female + female + union + service + educ + aboveavg + belowavg + I(exper^2), data=data)
+```
+Её остатки:
+
+Критерий     | p  
+----------   | ---------
+Шапиро-Уилка | `r shapiro.test(residuals(m3))$p.value`
+Уилкоксона   | `r wilcox.test(residuals(m3))$p.value`
+Бройша-Пагана| `r bptest(m3)$p.value`
+
+ненормальны и гетероскедастичны. Результаты проверки гипотез о значимости всех признаков с поправкой на множественность и дисперсиями Уайта:
+```{r, echo=FALSE}
+s3 <-summary(m3)
+s3$coefficients <- cbind(s3$coefficients, mycoeftest(m3, "HC0"))
+dimnames(s3$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s3)
+```
+Значимы все признаки, кроме индикатора привлекательности выше среднего. 
+
+Визуальный анализ остатков не показывает никаких существенных особенностей:
+```{r, echo=FALSE, fig.height=13.3, fig.width=10}
+par(mfrow=c(4,2))
+
+qqnorm(residuals(m3))
+qqline(residuals(m3), col="red")
+grid()
+
+plot(1:dim(data)[1], rstandard(m3), xlab="i", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(1:dim(data)[1], rstandard(m3))
+grid()
+
+plot(fitted(m3), rstandard(m3), xlab="Fitted values", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(fitted(m3), rstandard(m3))
+grid()
+
+plot(data$educ, rstandard(m3), xlab="Education", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$educ, rstandard(m3))
+grid()
+
+plot(data$exper, rstandard(m3), xlab="Experience", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper, rstandard(m3))
+grid()
+
+plot(data$exper^2, rstandard(m3), xlab="Experience^2", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper^2, rstandard(m3))
+grid()
+
+plot(data$exper * data$female, rstandard(m3), xlab="Experience * Sex", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper * data$female, rstandard(m3))
+grid()
+```
+
+Критерий Давидсона-Маккинона показывает, что модель 3 лучше модели 2:
+```{r, echo=FALSE}
+jtest(m2,m3)
+```
+
+### Модель 4
+Попробуем оставить в модели 2 цвет кожи и семейное положение, чтобы добавить их взаимодействия с полом. Как и в модели 3, добавим взаимодействие пола с опытом работы, а состояние здоровья удалим. 
+```{r, echo=FALSE}
+m4 <- lm(logwage ~ exper + I(exper^2) + exper*female + female + black + female*black + married + female*married + union + service + educ + aboveavg + belowavg, data=data)
+```
+Её остатки:
+
+Критерий     | p  
+----------   | ---------
+Шапиро-Уилка | `r shapiro.test(residuals(m4))$p.value`
+Уилкоксона   | `r wilcox.test(residuals(m4))$p.value`
+Бройша-Пагана| `r bptest(m4)$p.value`
+
+ненормальны и гетероскедастичны. Результаты проверки гипотез о значимости всех признаков с поправкой на множественность и дисперсиями Уайта:
+```{r, echo=FALSE}
+s4 <-summary(m4)
+s4$coefficients <- cbind(s4$coefficients, mycoeftest(m4, "HC0"))
+dimnames(s4$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s4)
+```
+
+Визуальный анализ остатков:
+```{r, echo=FALSE, fig.height=13.3, fig.width=10}
+par(mfrow=c(4,2))
+
+qqnorm(residuals(m4))
+qqline(residuals(m4), col="red")
+grid()
+
+plot(1:dim(data)[1], rstandard(m4), xlab="i", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(1:dim(data)[1], rstandard(m4))
+grid()
+
+plot(fitted(m4), rstandard(m4), xlab="Fitted values", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(fitted(m4), rstandard(m4))
+grid()
+
+plot(data$educ, rstandard(m4), xlab="Education", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$educ, rstandard(m4))
+grid()
+
+plot(data$exper, rstandard(m4), xlab="Experience", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper, rstandard(m4))
+grid()
+
+plot(data$exper^2, rstandard(m4), xlab="Experience^2", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper^2, rstandard(m4))
+grid()
+
+plot(data$exper * data$female, rstandard(m4), xlab="Experience * Sex", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data$exper * data$female, rstandard(m4))
+grid()
+```
+
+Сравним с моделью 3 по критерию Вальда с дисперсиями Уайта:
+```{r, echo=FALSE}
+waldtest(m4, m3, vcov = vcovHC(m4, type = "HC0"))
+```
+Получается значимо лучше.
+
+Посмотрим, не нужно ли добавить ещё какие-то взаимодействия:
+```{r, echo=FALSE}
+add1(m4, ~ .^2, test="F")
+```
+Взаимодействия квадрата опыта сложно интерпретировать, поэтому остановимся на полученной модели. 
+
+### Модель 5
+В предыдущей модели семейное положение и его взаимодействия незначимы по отдельности; посмотрим, можно ли удалить их оба (критерий Вальда с дисперсиями Уайта):
+```{r, echo=FALSE}
+m5 <- lm(logwage ~ exper + I(exper^2) + exper*female + female + black + female*black + union + service + educ + aboveavg + belowavg, data=data)
+
+s5 <-summary(m5)
+s5$coefficients <- cbind(s5$coefficients, mycoeftest(m5, "HC0"))
+dimnames(s5$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s5)
+
+waldtest(m4, m5, vcov = vcovHC(m4, type = "HC0"))
+```
+
+Модель получается значимо хуже. Удалим тогда только взаимодействие пола и семейного положения.
+```{r, echo=FALSE}
+m5 <- lm(logwage ~ exper + I(exper^2) + exper*female + female + black + female*black + married + union + service + educ + aboveavg + belowavg, data=data)
+
+s5 <-summary(m5)
+s5$coefficients <- cbind(s5$coefficients, mycoeftest(m5, "HC0"))
+dimnames(s5$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s5)
+
+waldtest(m4, m5, vcov = vcovHC(m4, type = "HC0"))
+```
+Снова становится значимо хуже. Кроме того, модифицированный коэффициент детерминации убывает. Вернёмся к модели 4.
+
+### Расстояние Кука
+Посмотрим на влиятельные наблюдения:
+```{r, echo=FALSE, fig.height=6.6, fig.width=10}
+par(mfrow=c(1,2))
+plot(fitted(m4), cooks.distance(m4), xlab="Fitted log wages", ylab="Cook's distance")
+lines(c(0,100), c(0.015, 0.015), col="red")
+plot(data$logwage, cooks.distance(m4), xlab="Log wages", ylab="Cook's distance")
+lines(c(0,100), c(0.015, 0.015), col="red")
+```
+Удалим наблюдения с расстоянием Кука больше 0.015 (порог выбран визуально) и перенастроим модель 4.
+```{r, echo=FALSE}
+excluded <- rbind(excluded, data[cooks.distance(m4)>0.015,])
+data2 <-data[cooks.distance(m4)<=0.015,]
+m6 <- lm(logwage ~ exper + I(exper^2) + exper*female + female + black + female*black + married + female*married + union + service + educ + aboveavg + belowavg, data=data2)
+```
+Сравним коэффициенты новой модели и модели 4:
+```{r, echo=FALSE}
+res <- cbind(coefficients(m4), coefficients(m6))
+colnames(res) <- c("All data", "Filtered data")
+res
+```
+некоторые коэффициенты существенно изменились, следовательно, удаление влиятельных наблюдений имело смысл.
+
+Остатки новой модели:
+
+Критерий     | p  
+----------   | ---------
+Шапиро-Уилка | `r shapiro.test(residuals(m6))$p.value`
+Уилкоксона   | `r wilcox.test(residuals(m6))$p.value`
+Бройша-Пагана| `r bptest(m6)$p.value`
+
+ненормальны и гетероскедастичны. Результаты проверки гипотез о значимости всех признаков с поправкой на множественность и дисперсиями Уайта:
+```{r, echo=FALSE}
+s6 <-summary(m6)
+s6$coefficients <- cbind(s6$coefficients, mycoeftest(m6, "HC0"))
+dimnames(s6$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s6)
+```
+Визуальный анализ остатков:
+```{r, echo=FALSE, fig.height=13.3, fig.width=10}
+par(mfrow=c(4,2))
+
+qqnorm(residuals(m6))
+qqline(residuals(m6), col="red")
+grid()
+
+plot(1:dim(data2)[1], rstandard(m6), xlab="i", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(1:dim(data2)[1], rstandard(m6))
+grid()
+
+plot(fitted(m6), rstandard(m6), xlab="Fitted values", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(fitted(m6), rstandard(m6))
+grid()
+
+plot(data2$educ, rstandard(m6), xlab="Education", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data2$educ, rstandard(m6))
+grid()
+
+plot(data2$exper, rstandard(m6), xlab="Experience", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data2$exper, rstandard(m6))
+grid()
+
+plot(data2$exper^2, rstandard(m6), xlab="Experience^2", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data2$exper^2, rstandard(m6))
+grid()
+
+plot(data2$exper * data2$female, rstandard(m6), xlab="Experience * Sex", ylab="Standardized residuals", col=mycol, pch=19)
+addtrend(data2$exper * data2$female, rstandard(m6))
+grid()
+```
+
+Проверим, нельзя ли теперь удалить взаимодействие пола с цветом кожи или семейным положением:
+```{r, echo=FALSE}
+m7 <- lm(logwage ~ exper + I(exper^2) + exper*female + female + black + female*married + married + union + service + educ + aboveavg + belowavg, data=data2)
+s7 <-summary(m7)
+s7$coefficients <- cbind(s7$coefficients, mycoeftest(m7, "HC0"))
+dimnames(s7$coefficients)[[2]][5] <- "Adjusted p-value"
+print(s7)
+waldtest(m6, m7, vcov = vcovHC(m6, type = "HC0"))
+# the same as above
+waldtest(m6, m7, vcov = function(x) vcovHC(x, type = "HC0"))
+```
+Нельзя.
+
+## Результат
+Итоговая модель (№6) построена по `r dim(data2)[1]` из 1260 исходных объектов и объясняет `r round(100*summary(m6)$r.squared)`% вариации логарифма отклика:
+
+```{r, echo=FALSE, fig.height=10, fig.width=10}
+par(mfrow=c(1,1))
+plot(data2$logwage, fitted(m6), xlab="Log wage", ylab="Predicted log wage", pch=19, col=mycol, 
+     xlim=c(0,max(excluded$logwage)), ylim=c(0,3))
+lines(c(0,10), c(0,10), col="red")
+points(excluded$logwage, predict(m6, excluded), col="red", pch=19)
+grid()
+```
+
+При интересующих нас факторах привлекательности стоят следующие коэффициенты:
+```{r, echo=FALSE}
+coefficients(m6)[c("aboveavg", "belowavg")]
+confint(m6)[c("aboveavg", "belowavg"),]
+```
+
+Таким образом, с учётом дополнительных факторов представители генеральной совокупности, из которой взята выборка, получают на `r round(-100*coefficients(m6)["belowavg"])`% меньше (доверительный интервал (`r round(-100*confint(m6)["belowavg",c(2,1)])`)%, p=`r s6$coefficients["belowavg", 4]`), если их привлекательность ниже средней, и на `r round(-100*coefficients(m6)["aboveavg"], 1)`% меньше (доверительный интервал (`r round(-100*confint(m6)["aboveavg",c(2,1)])`), p=`r s6$coefficients["aboveavg", 4]`), если их привлекательность выше средней.
+
+***************
+Hamermesh D.S., Biddle J.E. (1994) **Beauty and the Labor Market**, American Economic Review, 84, 1174–1194.
