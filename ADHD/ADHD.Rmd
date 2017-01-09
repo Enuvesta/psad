@@ -1,0 +1,48 @@
+---
+title: "Метилфенидат и синдром дефицита внимания"
+output: html_document
+---
+24 умственно отсталых ребёнка с СДВГ в течение недели принимали либо метилфенидат, либо плацебо, а в конце недели проходили тест на способность к подавлению импульсивных поведенческих реакций. 
+На втором этапе плацебо и препарат менялись, после недельного курса каждый испытуемые проходили второй тест.
+    
+Каков эффект препарата?
+
+```{r, fig.height=7, fig.width=7}
+att <- read.table("ADHD.txt", header=T)
+plot(att, col="red", pch=16, xlim=c(min(att), max(att)), ylim=c(min(att), max(att)), xlab="Placebo", ylab="Methylphenidate")
+lines(c(0,100), c(0,100), col="black")
+grid()
+```
+
+Чтобы использовать критерий Стьюдента для связанных выборок, проверим, нет ли существенных отклонений от нормальности попарных разностей:
+
+```{r, echo=FALSE, fig.height=7, fig.width=7}
+qqnorm(att$D60 - att$D0)
+qqline(att$D60 - att$D0, col="red")
+shapiro.test(att$D60 - att$D0)
+```
+
+Следовательно, критерий Стьюдента применим:
+```{r}
+t.test(att$D60, att$D0, paired=TRUE)
+```
+
+Если бы у нас не было информации о связях между выборками, пришлось бы применять версию критерия Стьюдента для независимых выборок:
+
+```{r, fig.height=5.5, fig.width=10, echo=FALSE}
+par(mfrow=c(1,2))
+qqnorm(att$D0)
+qqline(att$D0, col="red", main="Placebo")
+
+qqnorm(att$D60)
+qqline(att$D60, col="red", main="Methylphenidate")
+
+shapiro.test(att$D0)
+shapiro.test(att$D60)
+```
+```{r}
+t.test(att$D60, att$D0)
+```
+
+**************
+Pearson D.A, Santos C.W., Casat C.D., et al. (2004). **Treatment effects of methylphenidate on cognitive functioning in children with mental retardation and ADHD.** Journal of the American Academy of Child and Adolescent Psychiatry, 43(6), 677–685.   

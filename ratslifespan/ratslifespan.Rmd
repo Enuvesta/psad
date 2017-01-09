@@ -1,0 +1,84 @@
+---
+title: "Продолжительность жизни крыс"
+output: html_document
+---
+В исследовании принимало участие 195 крыс. 
+106 из них держали на строгой диете, оставшиеся 89 — на диете ad libitum.
+Имеющиеся данные: продолжительность жизни крыс в каждой из групп.
+Влияет ли диета на продолжительность жизни?
+
+```{r}
+rats <- read.table("rats.txt", sep="\t", header=T)
+x1   <- subset(rats, diet == "restricted")$lifespan
+x2   <- subset(rats, diet == "ad libitum")$lifespan
+```
+
+```{r, fig.height=7}
+par(mfrow=c(2,1))
+hist(x1, xlim=c(0,1500), breaks=20, col="red",  xlab="", main="Restricted diet")
+box()
+hist(x2, xlim=c(0,1500), breaks=20, col="blue", xlab="Lifespan in days", main="Ad libitum diet")
+box()
+```
+
+```{r}
+par(mfrow=c(1,1))
+boxplot(rats$lifespan~rats$diet, col=c("red", "blue"), notch=T, horizontal=T, xlab="Lifespan in days", ylab="Diet")
+```
+
+### Нормальность
+Проверим нормальность выборок:
+```{r, fig.height=5.5, fig.width=10}
+par(mfrow=c(1,2))
+qqnorm(x1, main="Restricted diet")
+qqline(x1, col="red")
+
+qqnorm(x2, main="Ad libitum diet")
+qqline(x2, col="red")
+
+shapiro.test(x1)
+shapiro.test(x2)
+```
+
+Нормальность в обоих случаях отвергается. Попробуем исключить крыс, проживших меньше 400 дней (например, можно предположить, что смерть раньше этого срока вызывается причинами, не связанными с диетой).
+```{r}
+x1c <- x1[x1>=400]
+x2c <- x2[x2>=400]
+```
+
+```{r, fig.height=5.5, fig.width=10}
+par(mfrow=c(1,2))
+qqnorm(x1c, main="Restricted diet")
+qqline(x1c, col="red")
+
+qqnorm(x2c, main="Ad libitum diet")
+qqline(x2c, col="red")
+
+shapiro.test(x1c)
+shapiro.test(x2c)
+```
+Усечённые выборки можно считать практически нормальными.
+
+### Сравнение средних
+$H_0$: продолжительность жизни крыс не меняется при ограничении диеты.
+
+$H_1$: крысы на строгой диете живут дольше.
+
+```{r}
+t.test(x1c, x2c, alternative = "greater")
+```
+
+$H_1$: средняя продолжительность жизни крыс меняется при ограничении диеты.
+
+```{r}
+t.test(x1c, x2c, alternative = "two.sided")
+```
+
+На полных выборках:
+```{r}
+t.test(x1, x2, alternative = "greater")
+t.test(x1, x2, alternative = "two.sided")
+```
+
+**************
+Weindruch R., Walford R.L. **The Retardation of Aging and Disease by Dietary Restriction.**  Springfield: Charles C. Thomas, 1988.

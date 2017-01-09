@@ -1,0 +1,82 @@
+---
+title: "Эксперимент Майкельсона"
+output: html_document
+---
+Данные классического эксперимента Майкельсона по измерению скорости света с помощью вращающегося зеркала, 100 наблюдений:
+```{r}
+speed <- scan("speed.txt")
+speed
+hist(speed)
+```
+
+Можно ли считать наблюдения нормально распределёнными?
+
+```{r}
+plot(density(speed), main="Empirical probability density function", xlab="Speed, m/s")
+x <- seq(min(speed)-1000, max(speed)+1000, by=1)
+lines(x, dnorm(x, mean = mean(speed), sd = sd(speed)), col="red")
+
+plot(ecdf(speed), verticals = TRUE, pch=NA, main="Empirical cumulative distribution function", 
+     xlab="Speed, m/s")
+lines(x, pnorm(x, mean = mean(speed), sd = sd(speed)), col="red")
+```
+
+Normal probability plot:
+```{r, fig.height=7, fig.width=7}
+qqnorm(speed)
+qqline(speed, col="red")
+```
+
+Критерий хи-квадрат Пирсона:
+```{r, warning=FALSE}
+library(nortest)
+pearson.test(speed)
+```
+
+```{r, echo=FALSE}
+stem <- function(x,y,pch=16,linecol=1,clinecol=1,...){
+  if (missing(y)){
+    y = x
+    x = 1:length(x) }
+  plot(x,y,pch=pch,...)
+  for (i in 1:length(x)){
+    lines(c(x[i],x[i]), c(0,y[i]),col=linecol)
+  }
+  lines(c(x[1]-2,x[length(x)]+2), c(0,0),col=clinecol)
+}
+
+n <- length(speed)
+n.classes <- ceiling(2 * (n^(2/5)))
+num       <- floor(1 + n.classes * pnorm(speed, mean(speed), sd(speed)))
+count     <- tabulate(num, n.classes)
+xt        <- qnorm(sort(unique((num - 1) / n.classes)))[-1]
+xc        <- c(-1.8, (xt[-1] + head(xt, -1))/2, 1.8)
+stem(xc+0.02, count, linecol="red",xaxt="n", col="red", ylim=c(0, max(count)+1))
+axis(1, labels=as.character(round(xt, 2)), at=xt)
+lines(xc-0.02, rep(n/n.classes, n.classes), col="blue", type="p")
+for (i in 1:length(xc)){
+  lines(c(xc[i]-0.02,xc[i]-0.02), c(0, n/n.classes),col="blue")
+}
+```
+
+Критерии Колмогорова (Лиллиефорса), Андерсона-Дарлинга, Крамера-фон Мизеса:
+```{r}
+lillie.test(speed)
+ad.test(speed)
+cvm.test(speed)
+```
+
+Критерий Харке-Бера:
+```{r, warning=FALSE}
+library(normtest)
+jb.norm.test(speed)
+```
+
+Критерий Шапиро-Уилка:
+```{r}
+shapiro.test(speed)
+```
+
+
+**************
+Michelson A.A. **Experimental determination of the velocity of light made at the U.S. Naval Academy, Annapolis.** Astronomical Papers, 1, 109-145, 1880.
